@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>エッシャー風不規則テッセレーション・タイラー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold mb-2 text-purple-300">エッシャー風テッセレーション・タイラー</h1>
+<div class="flex gap-4 flex-wrap justify-center mb-3">
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">タイル形状</label>
+    <select id="shapeSelect" class="bg-gray-700 text-white rounded px-2 py-1 text-sm">
+      <option value="hex">正六角形</option>
+      <option value="square">正方形</option>
+      <option value="triangle">三角形</option>
+      <option value="irregular">不規則四角形</option>
+    </select>
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">タイルサイズ: <span id="sizeVal">60</span></label>
+    <input type="range" id="sizeSlider" min="20" max="120" value="60" class="w-32">
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">カラーモード</label>
+    <select id="colorMode" class="bg-gray-700 text-white rounded px-2 py-1 text-sm">
+      <option value="rainbow">レインボー</option>
+      <option value="monochrome">モノクローム</option>
+      <option value="warm">暖色系</option>
+      <option value="cool">寒色系</option>
+    </select>
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">アニメーション</label>
+    <button id="animBtn" class="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm">▶ 開始</button>
+  </div>
+  <div class="flex flex-col gap-1">
+    <label class="text-xs text-gray-300">保存</label>
+    <button id="saveBtn" class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">PNG保存</button>
+  </div>
+</div>
+<canvas id="canvas" aria-label="エッシャー風テッセレーションパターン" class="border border-gray-600 rounded"></canvas>
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 700;
+canvas.height = 500;
+
+let tileSize = 60;
+let shapeType = 'hex';
+let colorMode = 'rainbow';
+let animating = false;
+let animFrame = null;
+let phase = 0;
+let irregularOffset = 0;
+
+function getColor(index, total, ph) {
+  const t = (index / total + ph) % 1;
+  if (colorMode === 'rainbow') {
+    return `hsl(${t * 360}, 80%, 55%)`;
+  } else if (colorMode === 'monochrome') {
+    const v = Math.floor(t * 200 + 30);
+    return `rgb(${v},${v},${v})`;
+  } else if (colorMode === 'warm') {
+    return `hsl(${t * 60}, 85%, 55%)`;
+  } else {
+    return `hsl(${200 + t * 80}, 75%, 50%)`;
+  }
+}
+
+function hexPath(cx, cy, r, deform) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.PI / 3 * i - Math.PI / 6;
+    const dr = r + (deform ? Math.sin(i * 1.3 + phase * 2) * r * 0.12 : 0);
+    const x = cx + dr * Math.cos(angle);
+    const y = cy + dr * Math.sin(angle);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function squarePath(cx, cy, r, deform) {
+  const h = r * 0.9;
+  if (deform) {
+    const d = h * 0.15 * Math.sin(phase * 1.5);
+    ctx.beginPath();
+    ctx.moveTo(cx - h + d, cy - h - d);
+    ctx.lineTo(cx + h + d, cy - h + d);
+    ctx.lineTo(cx + h - d, cy + h + d);
+    ctx.lineTo(cx - h - d, cy + h - d);
+    ctx.closePath();
+  } else {
+    ctx.beginPath();
+    ctx.rect(cx - h, cy - h, h * 2, h * 2);
+    ctx.closePath();
+  }
+}
+
+function trianglePath(cx, cy, r, flipped, deform) {
+  ctx.beginPath();
+  const d = deform ? Math.sin(phase * 2) * r * 0.1 : 0;
+  if (!flipped) {
+    ctx.moveTo(cx, cy - r + d);
+    ctx.lineTo(cx + r * 0.866, cy + r * 0.5);
+    ctx.lineTo(cx - r * 0.866, cy + r * 0.5);
+  } else {
+    ctx.moveTo(cx, cy + r - d);
+    ctx.lineTo(cx + r * 0.866, cy - r * 0.5);
+    ctx.lineTo(cx - r * 0.866, cy - r * 0.5);
+  }
+  ctx.closePath();
+}
+
+function irregularPath(cx, cy, r, ix, iy, deform) {
+  const seed = (ix * 7 + iy * 13) % 100;
+  const offsets = [
+    seed * 0.003, (seed + 17) * 0.003,
+    (seed + 34) * 0.003, (seed + 51) * 0.003
+  ];
+  const ph = deform ? phase : 0;
+  const h = r * 0.9;
+  ctx.beginPath();
+  ctx.moveTo(cx - h + offsets[0] * h * 2, cy - h + offsets[1] * h * 2);
+  ctx.lineTo(cx + h + Math.sin(ph) * h * 0.1, cy - h + offsets[2] * h);
+  ctx.lineTo(cx + h + offsets[3] * h, cy + h + Math.sin(ph * 1.3) * h * 0.1);
+  ctx.lineTo(cx - h + Math.sin(ph * 0.7) * h * 0.1, cy + h + offsets[0] * h);
+  ctx.closePath();
+}
+
+function drawTessellation() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const r = tileSize / 2;
+  let idx = 0;
+
+  if (shapeType === 'hex') {
+    const hx = r * Math.sqrt(3);
+    const hy = r * 1.5;
+    const cols = Math.ceil(canvas.width / hx) + 2;
+    const rows = Math.ceil(canvas.height / hy) + 2;
+    const total = cols * rows;
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        const cx = col * hx + (row % 2 === 0 ? hx / 2 : 0);
+        const cy = row * hy;
+        hexPath(cx, cy, r, animating);
+        ctx.fillStyle = getColor(idx, total, phase * 0.1);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        idx++;
+      }
+    }
+  } else if (shapeType === 'square') {
+    const sz = r * 2;
+    const cols = Math.ceil(canvas.width / sz) + 2;
+    const rows = Math.ceil(canvas.height / sz) + 2;
+    const total = cols * rows;
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        const cx = col * sz + r;
+        const cy = row * sz + r;
+        squarePath(cx, cy, r, animating);
+        ctx.fillStyle = getColor(idx, total, phase * 0.08);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        idx++;
+      }
+    }
+  } else if (shapeType === 'triangle') {
+    const h = r * Math.sqrt(3);
+    const cols = Math.ceil(canvas.width / r) + 4;
+    const rows = Math.ceil(canvas.height / h) + 2;
+    const total = cols * rows * 2;
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        const cx = col * r + (row % 2 === 0 ? 0 : r / 2);
+        const cy = row * h;
+        trianglePath(cx, cy, r, false, animating);
+        ctx.fillStyle = getColor(idx, total, phase * 0.1);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        idx++;
+        trianglePath(cx + r / 2, cy + h / 2, r, true, animating);
+        ctx.fillStyle = getColor(idx, total, phase * 0.1);
+        ctx.fill();
+        ctx.stroke();
+        idx++;
+      }
+    }
+  } else {
+    const sz = r * 2;
+    const cols = Math.ceil(canvas.width / sz) + 2;
+    const rows = Math.ceil(canvas.height / sz) + 2;
+    const total = cols * rows;
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        const cx = col * sz + r;
+        const cy = row * sz + r;
+        irregularPath(cx, cy, r, col, row, animating);
+        ctx.fillStyle = getColor(idx + col + row, total, phase * 0.07);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        idx++;
+      }
+    }
+  }
+}
+
+function animate() {
+  phase += 0.015;
+  drawTessellation();
+  animFrame = requestAnimationFrame(animate);
+}
+
+document.getElementById('shapeSelect').addEventListener('change', e => {
+  shapeType = e.target.value;
+  drawTessellation();
+});
+
+document.getElementById('sizeSlider').addEventListener('input', e => {
+  tileSize = parseInt(e.target.value);
+  document.getElementById('sizeVal').textContent = tileSize;
+  drawTessellation();
+});
+
+document.getElementById('colorMode').addEventListener('change', e => {
+  colorMode = e.target.value;
+  drawTessellation();
+});
+
+document.getElementById('animBtn').addEventListener('click', () => {
+  animating = !animating;
+  const btn = document.getElementById('animBtn');
+  if (animating) {
+    btn.textContent = '■ 停止';
+    btn.className = 'bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm';
+    animate();
+  } else {
+    btn.textContent = '▶ 開始';
+    btn.className = 'bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm';
+    if (animFrame) cancelAnimationFrame(animFrame);
+  }
+});
+
+document.getElementById('saveBtn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = 'tessellation.png';
+  a.href = canvas.toDataURL();
+  a.click();
+});
+
+drawTessellation();
+</script>
+</body>
+</html>
